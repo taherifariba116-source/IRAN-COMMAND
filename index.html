@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>IRAN COMMAND | Defense Radar</title>
+
+<link rel="stylesheet"
+href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#080e16;color:#e8f4ff;
+ font-family:Tahoma,Arial,sans-serif
+}
+header{
+ background:#101c29;padding:15px;
+ border-bottom:1px solid #25465a;
+ display:flex;justify-content:space-between;align-items:center;
+ flex-wrap:wrap;gap:10px
+}
+h2{margin:0;color:#35d6c4;font-size:20px}
+.status{font-size:12px;color:#9bb5c9}
+.container{
+ display:grid;grid-template-columns:280px 1fr;
+ min-height:calc(100vh - 65px)
+}
+aside{
+ background:#0d1722;padding:14px;
+ border-left:1px solid #233b4c
+}
+.panel{
+ background:#132231;border:1px solid #29475b;
+ border-radius:10px;padding:12px;margin-bottom:12px
+}
+.panel h3{font-size:14px;color:#35d6c4;margin:0 0 12px}
+.stat{
+ display:flex;justify-content:space-between;
+ padding:8px 0;border-bottom:1px solid #263b4b;
+ font-size:12px
+}
+button{
+ border:0;border-radius:7px;padding:10px;
+ cursor:pointer;font-weight:bold;
+ background:#167f79;color:white;margin:3px
+}
+button:hover{filter:brightness(1.2)}
+button.red{background:#a83243}
+button.gray{background:#344b5c}
+button.green{background:#16875c}
+button:disabled{opacity:.4;cursor:not-allowed}
+#map{height:calc(100vh - 65px);min-height:550px}
+#targetInfo{font-size:12px;line-height:2;color:#c6d9e8}
+#log{
+ height:180px;overflow:auto;font-size:11px;
+ line-height:2;color:#b8cedd
+}
+.logitem{border-bottom:1px solid #253b4b;padding:3px}
+.badge{
+ display:inline-block;padding:4px 7px;
+ border-radius:5px;background:#234052;font-size:10px
+}
+#toast{
+ position:fixed;bottom:20px;left:20px;
+ background:#173b42;border:1px solid #35d6c4;
+ padding:12px;border-radius:8px;display:none;z-index:1000
+}
+.leaflet-popup-content{font-family:Tahoma;text-align:right}
+@media(max-width:750px){
+ .container{grid-template-columns:1fr}
+ aside{order:2}
+ #map{height:65vh;min-height:400px}
+}
+</style>
+</head>
+
+<body>
+
+<header>
+ <div>
+  <h2>IRAN COMMAND</h2>
+  <div class="status">سامانه شبیه‌سازی دفاعی | نسخه آزمایشی</div>
+ </div>
+ <div class="badge" id="systemStatus">● شبیه‌سازی متوقف است</div>
+</header>
+
+<div class="container">
+
+<aside>
+
+ <div class="panel">
+  <h3>وضعیت سامانه</h3>
+  <div class="stat"><span>وضعیت رادار</span><b id="radarStatus">خاموش</b></div>
+  <div class="stat"><span>اهداف فرضی</span><b id="targetCount">۰</b></div>
+  <div class="stat"><span>سامانه‌های بازی</span><b>۴</b></div>
+  <div class="stat"><span>مهمات بازی</span><b id="ammo">۲۰</b></div>
+  <div class="stat"><span>امتیاز</span><b id="score">۰</b></div>
+ </div>
+
+ <div class="panel">
+  <h3>کنترل شبیه‌سازی</h3>
+  <button class="green" onclick="startSimulation()">▶ شروع</button>
+  <button class="red" onclick="stopSimulation()">■ توقف</button>
+  <button class="gray" onclick="spawnTarget()">+ هدف فرضی</button>
+ </div>
+
+ <div class="panel">
+  <h3>هدف انتخاب‌شده</h3>
+  <div id="targetInfo">هنوز هدفی انتخاب نشده است.</div>
+  <button id="lockBtn" onclick="lockTarget()" disabled>🔒 قفل نمایشی</button>
+  <button id="fireBtn" class="red" onclick="fire()" disabled>🚀 شلیک بازی</button>
+ </div>
+
+ <div class="panel">
+  <h3>سامانه‌های پدافندی خیالی</h3>
+  <div id="units"></div>
+ </div>
+
+ <div class="panel">
+  <h3>گزارش رویدادها</h3>
+  <div id="log"></div>
+ </div>
+
+</aside>
+
+<main>
+ <div id="map"></div>
+</main>
+
+</div>
+
+<div id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+// نقشه نمایشی ایران
+const map=L.map('map').setView([32.4,53.7],5);
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+ maxZoom:18,
+ attribution:'© OpenStreetMap'
+}).addTo(map);
+
+// محدوده تقریبی نمایش کشور در بازی
+L.rectangle([[25,44],[40,63]],{
+ color:'#35d6c4',
+ weight:2,
+ fill:false,
+ dashArray:'7 6'
+}).addTo(map);
+
+// شهرهای نمایشی
+const cities=[
+ ['تهران',35.69,51.39],
+ ['تبریز',38.08,46.29],
+ ['اصفهان',32.65,51.67],
+ ['شیراز',29.59,52.58],
+ ['مشهد',36.30,59.60],
+ ['اهواز',31.32,48.68],
+ ['کرمان',30.28,57.08],
+ ['بندرعباس',27.18,56.27],
+ ['رشت',37.28,49.58],
+ ['یزد',31.89,54.36]
+];
+
+cities.forEach(c=>{
+ L.circleMarker([c[1],c[2]],{
+  radius:5,color:'#d8e9f4',
+  fillColor:'#d8e9f4',fillOpacity:1
+ }).addTo(map).bindPopup('شهر: '+c[0]);
+});
+
+// سامانه‌های ساختگی بازی؛ مکان‌ها صرفاً برای نمایش هستند
+const unitData=[
+ {name:'سامانه بازی آلفا',lat:35.1,lng:49.2,ammo:5},
+ {name:'سامانه بازی بتا',lat:32.1,lng:55.1,ammo:5},
+ {name:'سامانه بازی گاما',lat:28.9,lng:50.5,ammo:5},
+ {name:'سامانه بازی دلتا',lat:37.1,lng:57.2,ammo:5}
+];
+
+let units=[];
+let targets=[];
+let selected=null;
+let locked=false;
+let running=false;
+let timer=null;
+let ammo=20;
+let score=0;
+let nextId=1;
+
+function addLog(message){
+ const log=document.getElementById('log');
+ const item=document.createElement('div');
+ item.className='logitem';
+ item.textContent='['+new Date().toLocaleTimeString('fa-IR')+'] '+message;
+ log.prepend(item);
+}
+
+function toast(message){
+ const t=document.getElementById('toast');
+ t.textContent=message;
+ t.style.display='block';
+ setTimeout(()=>t.style.display='none',2500);
+}
+
+// ساخت نشانگر سامانه‌های خیالی
+unitData.forEach((u,i)=>{
+ const marker=L.marker([u.lat,u.lng]).addTo(map);
+ marker.bindPopup('🛡️ '+u.name+'<br>مهمات بازی: '+u.ammo);
+ const circle=L.circle([u.lat,u.lng],{
+  radius:45000,
+  color:'#24a879',
+  fillColor:'#24a879',
+  fillOpacity:.09,
+  weight:1
+ }).addTo(map);
+
+ units.push({...u,marker,circle});
+});
+
+function renderUnits(){
+ document.getElementById('units').innerHTML=units.map(u=>
+ `<div class="stat">
+ <span>${u.name}</span><b>${u.ammo} مهمات</b>
+ </div>`
+ ).join('');
+ document.getElementById('ammo').textContent=ammo;
+}
+
+renderUnits();
+
+function updateStats(){
+ document.getElementById('targetCount').textContent=targets.length;
+ document.getElementById('score').textContent=score;
+}
+
+function spawnTarget(){
+ const lat=26+Math.random()*12;
+ const lng=45+Math.random()*16;
+ const id=nextId++;
+
+ const marker=L.circleMarker([lat,lng],{
+  radius:8,
+  color:'#ffb52e',
+  fillColor:'#ff5722',
+  fillOpacity:1,
+  weight:2
+ }).addTo(map);
+
+ const target={
+  id,lat,lng,marker,
+  alive:true,
+  selected:false,
+  vx:(Math.random()-.5)*.035,
+  vy:(Math.random()-.5)*.035
+ };
+
+ marker.bindPopup('هدف فرضی شماره '+id);
+ marker.on('click',()=>selectTarget(id));
+
+ targets.push(target);
+ addLog('هدف فرضی شماره '+id+' وارد نقشه شد.');
+ updateStats();
+}
+
+function selectTarget(id){
+ selected=targets.find(t=>t.id===id && t.alive);
+ locked=false;
+
+ if(!selected)return;
+
+ targets.forEach(t=>{
+  t.marker.setStyle({
+   color:t.id===id?'#ffffff':'#ffb52e',
+   weight:t.id===id?4:2
+  });
+ });
+
+ document.getElementById('targetInfo').innerHTML=
+ `شناسه: ${selected.id}<br>
+ وضعیت: فعال<br>
+ نوع: هدف ساختگی بازی<br>
+ موقعیت نمایشی: ${selected.lat.toFixed(2)} , ${selected.lng.toFixed(2)}<br>
+ قفل: <span id="lockText">انجام نشده</span>`;
+
+ document.getElementById('lockBtn').disabled=false;
+ document.getElementById('fireBtn').disabled=true;
+
+ map.panTo([selected.lat,selected.lng]);
+}
+
+function lockTarget(){
+ if(!selected || !selected.alive)return;
+
+ locked=true;
+ document.getElementById('lockText').textContent='قفل نمایشی برقرار شد';
+ document.getElementById('fireBtn').disabled=false;
+ addLog('قفل نمایشی روی هدف '+selected.id+' برقرار شد.');
+ toast('هدف در بازی انتخاب و قفل شد.');
+}
+
+function fire(){
+ if(!selected || !selected.alive || !locked)return;
+ if(ammo<=0){
+  toast('مهمات بازی تمام شده است.');
+  return;
+ }
+
+ ammo--;
+ renderUnits();
+
+ // نتیجه صرفاً تصادفی و نمایشی است؛ فاقد مدل هدایت یا رهگیری واقعی
+ const result=Math.random()<.7;
+
+ const impact=L.circleMarker(
+  [selected.lat,selected.lng],
+  {
+   radius:18,color:'#ff5b43',
+   fillColor:'#ff8c42',fillOpacity:.3,
+   weight:3
+  }
+ ).addTo(map);
+
+ setTimeout(()=>map.removeLayer(impact),1200);
+
+ if(result){
+  selected.alive=false;
+  map.removeLayer(selected.marker);
+  targets=targets.filter(t=>t.alive);
+  score+=100;
+  addLog('هدف فرضی در بازی حذف شد. +۱۰۰ امتیاز');
+  toast('💥 برخورد نمایشی موفق!');
+ }else{
+  addLog('شلیک بازی به هدف فرضی برخورد نکرد.');
+  toast('شلیک بازی ناموفق بود.');
+ }
+
+ selected=null;
+ locked=false;
+
+ document.getElementById('targetInfo').textContent='هدف انتخاب نشده است.';
+ document.getElementById('lockBtn').disabled=true;
+ document.getElementById('fireBtn').disabled=true;
+
+ updateStats();
+}
+
+function moveTargets(){
+ targets.forEach(t=>{
+  if(!t.alive)return;
+
+  t.lat+=t.vx;
+  t.lng+=t.vy;
+
+  // حرکت ساده داخل محدوده نقشه بازی
+  if(t.lat<25 || t.lat>40)t.vx*=-1;
+  if(t.lng<44 || t.lng>63)t.vy*=-1;
+
+  t.marker.setLatLng([t.lat,t.lng]);
+ });
+
+ updateStats();
+}
+
+function startSimulation(){
+ if(running)return;
+
+ running=true;
+ document.getElementById('radarStatus').textContent='فعال';
+ document.getElementById('systemStatus').textContent='● شبیه‌سازی فعال است';
+
+ timer=setInterval(()=>{
+  moveTargets();
+
+  if(Math.random()<.18 && targets.length<8){
+   spawnTarget();
+  }
+ },1000);
+
+ addLog('شبیه‌سازی آغاز شد.');
+ toast('رادار بازی فعال شد.');
+}
+
+function stopSimulation(){
+ running=false;
+ clearInterval(timer);
+ document.getElementById('radarStatus').textContent='متوقف';
+ document.getElementById('systemStatus').textContent='● شبیه‌سازی متوقف است';
+ addLog('شبیه‌سازی متوقف شد.');
+}
+
+addLog('نقشه پدافند بازی بارگذاری شد.');
+addLog('تمام سامانه‌ها و اهداف این نسخه ساختگی هستند.');
+
+</script>
+</body>
+  </html>
